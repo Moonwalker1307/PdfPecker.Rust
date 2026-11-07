@@ -1,0 +1,24 @@
+[package]
+name = "pdfpecker"
+version = "1.23.0"
+edition = "2024"
+rust-version = "1.85"
+description = "HTML and Markdown to PDF, and PDF to images, text and Markdown, with no browser: PdfPecker's engine as a native library"
+license = "MIT"
+repository = "https://github.com/Moonwalker1307/PdfPecker.Rust"
+homepage = "https://pdfpecker.net"
+documentation = "https://docs.rs/pdfpecker"
+readme = "README.md"
+keywords = ["pdf", "html", "markdown", "html-to-pdf", "pdf-to-image"]
+categories = ["api-bindings", "text-processing", "multimedia::images"]
+include = ["/src", "/build.rs", "/wheels.txt", "/README.md", "/LICENSE", "/THIRD-PARTY-NOTICES.md", "/examples"]
+
+# No runtime dependencies: the library is loaded with the platform's own dlopen or LoadLibrary. The build script
+# downloads it from PyPI and checks it; these two pure-Rust crates hash and unzip the wheel.
+[build-dependencies]
+sha2 = "0.11"
+miniz_oxide = "0.9"
+
+[package.metadata.docs.rs]
+# docs.rs builds without network access; the build script skips the download there.
+targets = ["x86_64-unknown-linux-gnu"]

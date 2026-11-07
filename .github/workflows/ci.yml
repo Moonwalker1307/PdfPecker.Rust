@@ -1,0 +1,118 @@
+name: CI
+
+# Tests the crate on all eight platforms with the native libraries from the pdfpecker wheels on PyPI, and publishes it
+# to crates.io when the owner publishes a GitHub release.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    name: ${{ matrix.platform }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: ubuntu-24.04, platform: linux-x64 }
+          - { runner: ubuntu-24.04-arm, platform: linux-arm64 }
+          - { runner: macos-15, platform: darwin-arm64 }
+          - { runner: macos-15-intel, platform: darwin-x64 }
+          - { runner: windows-2025, platform: win32-x64 }
+          - { runner: windows-11-arm, platform: win32-arm64 }
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: stable
+          components: clippy, rustfmt
+      - run: ci/test.sh
+
+  musl:
+    # Alpine runs in docker directly, as in the npm package's CI. The binaries link dynamically, which loading the
+    # library needs; the build script stops a static musl build with that advice.
+    name: ${{ matrix.platform }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: ubuntu-24.04, platform: linux-x64-musl }
+          - { runner: ubuntu-24.04-arm, platform: linux-arm64-musl }
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: >-
+          docker run --rm -v "$PWD:/src" -w /src -e RUSTFLAGS="-C target-feature=-crt-static"
+          -e RUSTDOCFLAGS="-C target-feature=-crt-static"
+          rust:1-alpine sh -c 'apk add --no-cache bash curl musl-dev && rustup component add clippy rustfmt && ci/test.sh'
+
+  msrv:
+    name: Rust 1.85 (rust-version)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: "1.85"
+      - run: cargo test
+
+  publish:
+    # Runs only for a published release. The first version is published with the CARGO_REGISTRY_TOKEN secret, because
+    # crates.io offers Trusted Publishing only for a crate that exists. Once Trusted Publishing is set up for this
+    # workflow and environment on crates.io and the secret is deleted, the job asks crates.io for a short-lived token
+    # instead.
+    if: github.event_name == 'release'
+    needs: [test, musl, msrv]
+    runs-on: ubuntu-24.04
+    environment:
+      name: crates-io
+      url: https://crates.io/crates/pdfpecker
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: stable
+      - name: The release tag matches the crate version
+        run: |
+          version=$(cargo metadata --no-deps --format-version 1 | python3 -c 'import json,sys; print(json.load(sys.stdin)["packages"][0]["version"])')
+          tag="${GITHUB_REF_NAME#v}"
+          echo "tag $tag, Cargo.toml $version"
+          [ "$tag" = "$version" ]
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+      - name: Trusted Publishing token
+        if: env.CARGO_REGISTRY_TOKEN == ''
+        id: auth
+        uses: rust-lang/crates-io-auth-action@3268eb413133e2960fa4ae0e963ca76380c54cd9 # v1.0.6
+      - name: Publish
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ env.CARGO_REGISTRY_TOKEN || steps.auth.outputs.token }}
+        run: |
+          # A version that is already there (a re-run) is skipped.
+          if curl -sf -A "pdfpecker-release (github.com/Moonwalker1307/PdfPecker.Rust)" \
+              "https://crates.io/api/v1/crates/pdfpecker/$VERSION" >/dev/null; then
+            echo "pdfpecker $VERSION is already on crates.io"
+          else
+            cargo publish
+          fi

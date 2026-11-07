@@ -1,0 +1,12 @@
+# Weekly pull requests for new versions of the pinned GitHub Actions and of the two build dependencies. PdfPecker
+# itself is not updated here: its version moves with each library release, in a pull request that changes Cargo.toml.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
