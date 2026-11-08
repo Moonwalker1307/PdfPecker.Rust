@@ -42,6 +42,8 @@ the crate loads it at run time.
 - `ci/test.sh` – fmt, clippy, tests and docs, then the packaged crate used as a dependency of a fresh project.
 - `.github/workflows/ci.yml` – the eight platforms and Rust 1.85 on every PR, and the crates.io publish on a published
   release.
+- `.github/workflows/vulnerability-scan.yml` – daily: OSV-Scanner on the build dependencies (results in Security → Code
+  scanning), and an issue for each new .NET security release, since the library from the wheels carries the runtime.
 
 ## Build and verify
 
