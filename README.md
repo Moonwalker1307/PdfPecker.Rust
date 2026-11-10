@@ -82,12 +82,14 @@ Every function returns `pdfpecker::Result`. PDFs are given as `&[u8]`; options a
 | `markdown_to_pdf(markdown, &PdfOptions)` | a PDF from CommonMark with GitHub tables, task lists, strikethrough and footnotes |
 | `markdown_file_to_pdf(path, &PdfOptions)` | as `html_file_to_pdf` |
 | `pdf_to_images(pdf, &ImageOptions)` | encoded images, one per page: `dpi`, `format` (PNG, JPEG, WebP), `pages`, `width`, `height`, `transparent`, `quality`, `password` |
-| `pdf_to_text(pdf, &TextOptions)` | the text in reading order, pages separated by `\f`: `pages`, `password` |
+| `pdf_to_text(pdf, &TextOptions)` | the text in reading order, pages separated by `\f`: `pages`, `password`, `order` (`TextOrder::Reading` or `TopToBottom`) |
 | `pdf_to_text_pages(pdf, &TextOptions)` | the text of each page |
 | `pdf_to_markdown(pdf, &MarkdownOptions)` | GitHub Flavored Markdown of any PDF, for search indexes and language models: `pages`, `include_links`, `include_annotations`, `include_images`, `page_comments`, `max_pages`, `password` |
 | `pdf_page_count(pdf, &PageCountOptions)` | the number of pages: `password` |
 | `merge_pdfs(&[pdfs], &MergeOptions)` | one PDF from several: `title`, `author`, `bookmarks`, `creation_date` |
 | `pdf_to_pdfa(pdf, &PdfAOptions)` | any PDF converted to PDF/A-2b (default), -2u, -3b or -3u, as `PdfAResult { pdf, changes, problems }` |
+| `redact_pdf(pdf, &RedactOptions)` | the PDF with text, images and drawings removed for good: `text`, `pattern`, `area`, `ignore_case`, `fill_color` |
+| `read_barcodes(data, &BarcodeOptions)` | the QR, Data Matrix, Code 128 and EAN-13 codes in an image or a PDF, as `Barcode { format, text, data, page, x, y, width, height, corners, .. }`: `formats`, `try_inverted`, `pages`, `password`, `dpi` |
 | `library_version()`, `library_path()` | the PdfPecker version inside, and the library file loaded |
 
 `pages` takes a page number (`3`), an array or `Vec` (`[1, 3]`), a range (`2..=4`) or a string such as `"1-3,5"` or

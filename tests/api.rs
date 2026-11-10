@@ -274,6 +274,83 @@ fn text_pages() {
 }
 
 #[test]
+fn text_order() {
+    let column = |side: &str| {
+        (0..12)
+            .map(|i| format!("{side} column sentence number {i} goes on here."))
+            .collect::<Vec<_>>()
+            .join(" ")
+    };
+    let pdf = pdf(&format!(
+        "<div style='display: flex; gap: 40px'><p style='flex: 1'>{}</p><p style='flex: 1'>{}</p></div>",
+        column("Left"),
+        column("Right")
+    ));
+    let reading = text(&pdf);
+    assert!(reading.find("Right").unwrap() > reading.find("number 11").unwrap());
+    let across = pdf_to_text(&pdf, &TextOptions::new().order(TextOrder::TopToBottom)).unwrap();
+    assert!(across.find("Right").unwrap() < across.find("number 11").unwrap());
+}
+
+#[test]
+fn redact() {
+    let pdf = pdf("<p>Customer 123456-7890 owes 42 EUR</p><p>Contact Example Customer Ltd.</p>");
+    let redacted = redact_pdf(
+        &pdf,
+        &RedactOptions::new()
+            .pattern(r"\b\d{6}-\d{4}\b")
+            .text("example customer")
+            .ignore_case(true),
+    )
+    .unwrap();
+    let left = text(&redacted);
+    assert!(
+        !left.contains("123456") && !left.contains("Example"),
+        "{left}"
+    );
+    assert!(left.contains("owes 42 EUR"), "{left}");
+    let cut = redact_pdf(
+        &pdf,
+        &RedactOptions::new()
+            .area(1, 0.0, 0.0, 2000.0, 2000.0)
+            .fill_color("transparent"),
+    )
+    .unwrap();
+    assert_eq!(text(&cut).trim(), "");
+    let bad = redact_pdf(&pdf, &RedactOptions::new().pattern("(")).unwrap_err();
+    assert_eq!(bad.kind(), ErrorKind::InvalidArgument);
+    let past_end = redact_pdf(&pdf, &RedactOptions::new().area(9, 0.0, 0.0, 10.0, 10.0));
+    assert_eq!(past_end.unwrap_err().kind(), ErrorKind::InvalidArgument);
+}
+
+#[test]
+fn barcodes() {
+    let pdf = pdf(&format!("<p>Pay here</p>{}", include_str!("qr.svg")));
+    let found = read_barcodes(&pdf, &BarcodeOptions::new()).unwrap();
+    let [code] = &found[..] else {
+        panic!("{found:?}")
+    };
+    assert_eq!(code.format, BarcodeFormat::QrCode);
+    assert_eq!(code.text, "https://example.com/invoice/42");
+    assert_eq!(code.data, code.text.as_bytes());
+    assert!(code.page == 1 && code.width > 0.0 && code.corners.len() == 4);
+    let png = pdf_to_images(&pdf, &ImageOptions::new().dpi(150.0))
+        .unwrap()
+        .remove(0);
+    let from_image = read_barcodes(&png, &BarcodeOptions::new()).unwrap();
+    assert_eq!(from_image.len(), 1);
+    assert_eq!(from_image[0].text, code.text);
+    assert_eq!(from_image[0].page, 0);
+    let none = read_barcodes(&png, &BarcodeOptions::new().formats([BarcodeFormat::Ean13]));
+    assert!(none.unwrap().is_empty());
+    let pages_on_image = read_barcodes(&png, &BarcodeOptions::new().pages(1));
+    assert_eq!(
+        pages_on_image.unwrap_err().kind(),
+        ErrorKind::InvalidArgument
+    );
+}
+
+#[test]
 fn merge() {
     let (a, b) = (pdf("<p>first"), pdf("<p>second"));
     let merged = merge_pdfs(&[&a, &b], &MergeOptions::new().title("Both")).unwrap();

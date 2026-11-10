@@ -1,6 +1,6 @@
 [package]
 name = "pdfpecker"
-version = "1.23.0"
+version = "1.24.0"
 edition = "2024"
 rust-version = "1.85"
 description = "HTML and Markdown to PDF, and PDF to images, text and Markdown, with no browser: PdfPecker's engine as a native library"

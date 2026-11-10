@@ -154,6 +154,61 @@ impl ImageFormat {
     }
 }
 
+/// The order in which [`pdf_to_text`](crate::pdf_to_text) reads a page's text.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[non_exhaustive]
+pub enum TextOrder {
+    /// Reading order, the default: columns one after the other, and tables row by row.
+    #[default]
+    Reading,
+    /// Lines from the top of the page to the bottom, left to right, as the text stands on the page.
+    TopToBottom,
+}
+
+impl TextOrder {
+    fn name(self) -> &'static str {
+        match self {
+            Self::Reading => "reading",
+            Self::TopToBottom => "top_to_bottom",
+        }
+    }
+}
+
+/// A barcode symbology that [`read_barcodes`](crate::read_barcodes) can find.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum BarcodeFormat {
+    /// QR code.
+    QrCode,
+    /// Data Matrix.
+    DataMatrix,
+    /// Code 128, GS1-128 included.
+    Code128,
+    /// EAN-13.
+    Ean13,
+}
+
+impl BarcodeFormat {
+    pub(crate) fn name(self) -> &'static str {
+        match self {
+            Self::QrCode => "qr_code",
+            Self::DataMatrix => "data_matrix",
+            Self::Code128 => "code128",
+            Self::Ean13 => "ean13",
+        }
+    }
+
+    pub(crate) fn from_name(name: &str) -> Option<Self> {
+        match name {
+            "qr_code" => Some(Self::QrCode),
+            "data_matrix" => Some(Self::DataMatrix),
+            "code128" => Some(Self::Code128),
+            "ean13" => Some(Self::Ean13),
+            _ => None,
+        }
+    }
+}
+
 /// Which pages a call reads, numbered from 1.
 ///
 /// Made from a page number (`3`), a list (`[1, 3]` or `vec![1, 3]`), a range (`2..=4`) or a string in PdfPecker's
@@ -623,6 +678,7 @@ impl ImageOptions {
 pub struct TextOptions {
     pages: Option<Pages>,
     password: Option<String>,
+    order: Option<TextOrder>,
     timeout: Option<Duration>,
 }
 
@@ -644,6 +700,12 @@ impl TextOptions {
         self
     }
 
+    /// The order of the text on each page: [`TextOrder::Reading`] (default) or [`TextOrder::TopToBottom`].
+    pub fn order(mut self, order: TextOrder) -> Self {
+        self.order = Some(order);
+        self
+    }
+
     /// Stops with [`ErrorKind::Timeout`](crate::ErrorKind::Timeout) after this long.
     pub fn timeout(mut self, timeout: Duration) -> Self {
         self.timeout = Some(timeout);
@@ -657,6 +719,9 @@ impl TextOptions {
         }
         if let Some(v) = &self.password {
             o.str("password", v);
+        }
+        if let Some(v) = self.order {
+            o.str("order", v.name());
         }
         timeout(&mut o, self.timeout)?;
         Ok(o.finish())
@@ -884,6 +949,161 @@ impl MergeOptions {
     }
 }
 
+/// What [`redact_pdf`](crate::redact_pdf) removes, and how the removed places look.
+///
+/// Text, a pattern and areas can be combined; each adds to what is removed.
+#[derive(Debug, Clone, Default)]
+pub struct RedactOptions {
+    text: Option<String>,
+    pattern: Option<String>,
+    areas: Vec<[f64; 5]>,
+    ignore_case: Option<bool>,
+    fill_color: Option<String>,
+    timeout: Option<Duration>,
+}
+
+impl RedactOptions {
+    /// Nothing to remove yet, and black boxes over what is removed.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Removes every word that holds this text; a phrase matches across the words of a line.
+    pub fn text(mut self, text: impl Into<String>) -> Self {
+        self.text = Some(text.into());
+        self
+    }
+
+    /// Removes every word that this regular expression matches, in .NET syntax, which agrees with Rust's `regex`
+    /// crate for common patterns.
+    pub fn pattern(mut self, pattern: impl Into<String>) -> Self {
+        self.pattern = Some(pattern.into());
+        self
+    }
+
+    /// Removes everything in a rectangle on a page (numbered from 1), in points from the page's top-left corner.
+    pub fn area(mut self, page: u32, x: f64, y: f64, width: f64, height: f64) -> Self {
+        self.areas.push([f64::from(page), x, y, width, height]);
+        self
+    }
+
+    /// Compares [`text`](Self::text) and [`pattern`](Self::pattern) without regard to case (off by default).
+    pub fn ignore_case(mut self, ignore_case: bool) -> Self {
+        self.ignore_case = Some(ignore_case);
+        self
+    }
+
+    /// The colour of the boxes drawn over what was removed, as a CSS colour (default black); `"transparent"` draws
+    /// no box.
+    pub fn fill_color(mut self, color: impl Into<String>) -> Self {
+        self.fill_color = Some(color.into());
+        self
+    }
+
+    /// Stops with [`ErrorKind::Timeout`](crate::ErrorKind::Timeout) after this long.
+    pub fn timeout(mut self, timeout: Duration) -> Self {
+        self.timeout = Some(timeout);
+        self
+    }
+
+    pub(crate) fn to_json(&self) -> Result<String> {
+        let mut o = Object::default();
+        if let Some(v) = &self.text {
+            o.str("text", v);
+        }
+        if let Some(v) = &self.pattern {
+            o.str("pattern", v);
+        }
+        if !self.areas.is_empty() {
+            o.num_lists("areas", &self.areas)?;
+        }
+        if let Some(v) = self.ignore_case {
+            o.bool("ignore_case", v);
+        }
+        if let Some(v) = &self.fill_color {
+            o.str("fill_color", v);
+        }
+        timeout(&mut o, self.timeout)?;
+        Ok(o.finish())
+    }
+}
+
+/// Options of [`read_barcodes`](crate::read_barcodes).
+#[derive(Debug, Clone, Default)]
+pub struct BarcodeOptions {
+    formats: Vec<BarcodeFormat>,
+    try_inverted: Option<bool>,
+    pages: Option<Pages>,
+    password: Option<String>,
+    dpi: Option<f64>,
+    timeout: Option<Duration>,
+}
+
+impl BarcodeOptions {
+    /// The defaults: every format, light-on-dark codes too, and for a PDF every page at 300 dpi.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Looks only for these formats (default all).
+    pub fn formats(mut self, formats: impl IntoIterator<Item = BarcodeFormat>) -> Self {
+        self.formats = formats.into_iter().collect();
+        self
+    }
+
+    /// Also looks for light codes on a dark background (on by default).
+    pub fn try_inverted(mut self, try_inverted: bool) -> Self {
+        self.try_inverted = Some(try_inverted);
+        self
+    }
+
+    /// For a PDF, which pages to search (default all).
+    pub fn pages(mut self, pages: impl Into<Pages>) -> Self {
+        self.pages = Some(pages.into());
+        self
+    }
+
+    /// For a PDF, its password.
+    pub fn password(mut self, password: impl Into<String>) -> Self {
+        self.password = Some(password.into());
+        self
+    }
+
+    /// For a PDF, the resolution pages are rendered at (default 300).
+    pub fn dpi(mut self, dpi: f64) -> Self {
+        self.dpi = Some(dpi);
+        self
+    }
+
+    /// Stops with [`ErrorKind::Timeout`](crate::ErrorKind::Timeout) after this long.
+    pub fn timeout(mut self, timeout: Duration) -> Self {
+        self.timeout = Some(timeout);
+        self
+    }
+
+    pub(crate) fn to_json(&self) -> Result<String> {
+        let mut o = Object::default();
+        if !self.formats.is_empty() {
+            let names: Vec<String> = self.formats.iter().map(|f| f.name().to_string()).collect();
+            o.strs("formats", &names);
+        }
+        if let Some(v) = self.try_inverted {
+            o.bool("try_inverted", v);
+        }
+        if let Some(v) = &self.pages {
+            o.str("pages", &v.0);
+        }
+        if let Some(v) = &self.password {
+            o.str("password", v);
+        }
+        if let Some(v) = self.dpi {
+            o.num("dpi", v)?;
+        }
+        timeout(&mut o, self.timeout)?;
+        Ok(o.finish())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -914,6 +1134,30 @@ mod tests {
         assert_eq!(
             TextOptions::new().pages(2..=4).to_json().unwrap(),
             r#"{"pages":"2-4"}"#
+        );
+        assert_eq!(
+            TextOptions::new()
+                .order(TextOrder::TopToBottom)
+                .to_json()
+                .unwrap(),
+            r#"{"order":"top_to_bottom"}"#
+        );
+        assert_eq!(
+            RedactOptions::new()
+                .text("secret")
+                .area(2, 10.0, 20.5, 30.0, 40.0)
+                .fill_color("transparent")
+                .to_json()
+                .unwrap(),
+            r#"{"text":"secret","areas":[[2,10,20.5,30,40]],"fill_color":"transparent"}"#
+        );
+        assert_eq!(
+            BarcodeOptions::new()
+                .formats([BarcodeFormat::QrCode, BarcodeFormat::Ean13])
+                .try_inverted(false)
+                .to_json()
+                .unwrap(),
+            r#"{"formats":["qr_code","ean13"],"try_inverted":false}"#
         );
         assert_eq!(unix_seconds(UNIX_EPOCH - Duration::from_millis(1500)), -2);
     }
