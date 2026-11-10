@@ -33,8 +33,9 @@ mod options;
 
 pub use error::{Error, ErrorKind, Result};
 pub use options::{
-    Accessibility, Conformance, ImageFormat, ImageOptions, Margin, MarkdownOptions, MergeOptions,
-    PageCountOptions, PageSize, Pages, PdfAOptions, PdfOptions, TextOptions,
+    Accessibility, BarcodeFormat, BarcodeOptions, Conformance, ImageFormat, ImageOptions, Margin,
+    MarkdownOptions, MergeOptions, PageCountOptions, PageSize, Pages, PdfAOptions, PdfOptions,
+    RedactOptions, TextOptions, TextOrder,
 };
 
 use std::path::{Path, PathBuf};
@@ -165,6 +166,84 @@ pub fn pdf_to_pdfa(pdf: &[u8], options: &PdfAOptions) -> Result<PdfAResult> {
 /// Merges PDFs into one, keeping links, bookmarks and form fields.
 pub fn merge_pdfs<P: AsRef<[u8]>>(pdfs: &[P], options: &MergeOptions) -> Result<Vec<u8>> {
     native::invoke("merge_pdfs", &native::frame(pdfs)?, &options.to_json()?)
+}
+
+/// Removes text, images and drawings from a PDF for good, and draws a box where they were.
+///
+/// What [`RedactOptions`] names (text, a pattern or areas) is taken out of the page content itself, not covered: the
+/// text around it keeps its place, the originals of redacted images leave the file, and earlier revisions do not
+/// survive. Encrypted PDFs return [`ErrorKind::InvalidArgument`].
+pub fn redact_pdf(pdf: &[u8], options: &RedactOptions) -> Result<Vec<u8>> {
+    native::invoke("redact_pdf", pdf, &options.to_json()?)
+}
+
+/// A barcode that [`read_barcodes`] found.
+#[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
+pub struct Barcode {
+    /// The symbology.
+    pub format: BarcodeFormat,
+    /// The decoded text.
+    pub text: String,
+    /// The decoded bytes, for codes that hold binary data.
+    pub data: Vec<u8>,
+    /// True for GS1 data (FNC1 first), such as a GS1-128 or GS1 DataMatrix code.
+    pub is_gs1: bool,
+    /// The PDF page, from 1, or 0 for an image.
+    pub page: u32,
+    /// The left edge, in points on the page or pixels of the image, from the top-left corner.
+    pub x: f64,
+    /// The top edge.
+    pub y: f64,
+    /// The width.
+    pub width: f64,
+    /// The height.
+    pub height: f64,
+    /// The four corners, as (x, y), for a code that is turned or skewed.
+    pub corners: Vec<(f64, f64)>,
+}
+
+/// Reads QR codes, Data Matrix codes, Code 128 and EAN-13 barcodes from an image (PNG, JPEG, GIF, WebP, BMP or TIFF)
+/// or from the pages of a PDF, which is recognised by its content.
+pub fn read_barcodes(data: &[u8], options: &BarcodeOptions) -> Result<Vec<Barcode>> {
+    let raw = native::invoke("read_barcodes", data, &options.to_json()?)?;
+    let malformed = || {
+        Error::new(
+            ErrorKind::Internal,
+            "the native library returned a malformed barcode list",
+        )
+    };
+    let text = std::str::from_utf8(&raw).map_err(|_| malformed())?;
+    let list = json::parse(text).ok_or_else(malformed)?;
+    list.as_array()
+        .ok_or_else(malformed)?
+        .iter()
+        .map(|b| barcode(b).ok_or_else(malformed))
+        .collect()
+}
+
+fn barcode(b: &json::Value) -> Option<Barcode> {
+    let num = |key| b.get(key).and_then(json::Value::as_f64);
+    Some(Barcode {
+        format: BarcodeFormat::from_name(b.get("format")?.as_str()?)?,
+        text: b.get("text")?.as_str()?.to_string(),
+        data: json::base64(b.get("bytes")?.as_str()?)?,
+        is_gs1: b.get("is_gs1")?.as_bool()?,
+        page: u32::try_from(num("page")? as i64).ok()?,
+        x: num("x")?,
+        y: num("y")?,
+        width: num("width")?,
+        height: num("height")?,
+        corners: b
+            .get("corners")?
+            .as_array()?
+            .iter()
+            .map(|c| match c.as_array()? {
+                [x, y] => Some((x.as_f64()?, y.as_f64()?)),
+                _ => None,
+            })
+            .collect::<Option<_>>()?,
+    })
 }
 
 fn read_document(path: &Path, options: &PdfOptions) -> Result<(String, PdfOptions)> {

@@ -62,6 +62,32 @@ impl Object {
         Ok(())
     }
 
+    pub(crate) fn num_lists(&mut self, name: &str, lists: &[[f64; 5]]) -> Result<()> {
+        if let Some(v) = lists.iter().flatten().find(|v| !v.is_finite()) {
+            return Err(Error::argument(format!(
+                "{name} must be finite numbers, not {v}"
+            )));
+        }
+        self.key(name);
+        self.out.push('[');
+        for (i, list) in lists.iter().enumerate() {
+            if i > 0 {
+                self.out.push(',');
+            }
+            self.out.push('[');
+            self.out.push_str(
+                &list
+                    .iter()
+                    .map(f64::to_string)
+                    .collect::<Vec<_>>()
+                    .join(","),
+            );
+            self.out.push(']');
+        }
+        self.out.push(']');
+        Ok(())
+    }
+
     pub(crate) fn strs(&mut self, name: &str, values: &[String]) {
         self.key(name);
         self.out.push('[');
@@ -113,6 +139,102 @@ pub(crate) fn string_list(json: &str, name: &str) -> Result<Vec<String>> {
     })
 }
 
+/// A JSON value, for the barcode list the native library returns.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum Value {
+    Null,
+    Bool(bool),
+    Number(f64),
+    String(String),
+    Array(Vec<Value>),
+    Object(Vec<(String, Value)>),
+}
+
+impl Value {
+    pub(crate) fn get(&self, key: &str) -> Option<&Value> {
+        match self {
+            Self::Object(fields) => fields.iter().find(|(k, _)| k == key).map(|(_, v)| v),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn as_str(&self) -> Option<&str> {
+        match self {
+            Self::String(s) => Some(s),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn as_f64(&self) -> Option<f64> {
+        match self {
+            Self::Number(n) => Some(*n),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn as_bool(&self) -> Option<bool> {
+        match self {
+            Self::Bool(b) => Some(*b),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn as_array(&self) -> Option<&[Value]> {
+        match self {
+            Self::Array(items) => Some(items),
+            _ => None,
+        }
+    }
+}
+
+/// Reads one JSON value, the whole input.
+pub(crate) fn parse(json: &str) -> Option<Value> {
+    let mut p = Parser {
+        s: json.as_bytes(),
+        at: 0,
+    };
+    let value = p.value(0)?;
+    p.ws();
+    (p.at == p.s.len()).then_some(value)
+}
+
+/// Decodes standard base64 with padding, as .NET's Utf8JsonWriter writes it.
+pub(crate) fn base64(text: &str) -> Option<Vec<u8>> {
+    fn digit(c: u8) -> Option<u32> {
+        Some(match c {
+            b'A'..=b'Z' => c - b'A',
+            b'a'..=b'z' => c - b'a' + 26,
+            b'0'..=b'9' => c - b'0' + 52,
+            b'+' => 62,
+            b'/' => 63,
+            _ => return None,
+        } as u32)
+    }
+    let bytes = text.as_bytes();
+    if bytes.len() % 4 != 0 {
+        return None;
+    }
+    let mut out = Vec::with_capacity(bytes.len() / 4 * 3);
+    for chunk in bytes.chunks(4) {
+        let pad = chunk.iter().rev().take_while(|&&c| c == b'=').count();
+        if pad > 2 {
+            return None;
+        }
+        let mut n = 0u32;
+        for &c in &chunk[..4 - pad] {
+            n = (n << 6) | digit(c)?;
+        }
+        n <<= 6 * pad as u32;
+        let three = [(n >> 16) as u8, (n >> 8) as u8, n as u8];
+        out.extend_from_slice(&three[..3 - pad]);
+    }
+    Some(out)
+}
+
+// Deep enough for the barcode list (an array of objects holding arrays of pairs), shallow enough that hostile output
+// could not overflow the stack.
+const MAX_DEPTH: usize = 16;
+
 struct Parser<'a> {
     s: &'a [u8],
     at: usize,
@@ -128,6 +250,71 @@ impl Parser<'_> {
     fn eat(&mut self, b: u8) -> Option<()> {
         self.ws();
         (self.s.get(self.at) == Some(&b)).then(|| self.at += 1)
+    }
+
+    fn value(&mut self, depth: usize) -> Option<Value> {
+        if depth > MAX_DEPTH {
+            return None;
+        }
+        self.ws();
+        match *self.s.get(self.at)? {
+            b'"' => self.string().map(Value::String),
+            b'{' => {
+                self.at += 1;
+                let mut fields = Vec::new();
+                if self.eat(b'}').is_some() {
+                    return Some(Value::Object(fields));
+                }
+                loop {
+                    let key = self.string()?;
+                    self.eat(b':')?;
+                    fields.push((key, self.value(depth + 1)?));
+                    if self.eat(b',').is_none() {
+                        self.eat(b'}')?;
+                        return Some(Value::Object(fields));
+                    }
+                }
+            }
+            b'[' => {
+                self.at += 1;
+                let mut items = Vec::new();
+                if self.eat(b']').is_some() {
+                    return Some(Value::Array(items));
+                }
+                loop {
+                    items.push(self.value(depth + 1)?);
+                    if self.eat(b',').is_none() {
+                        self.eat(b']')?;
+                        return Some(Value::Array(items));
+                    }
+                }
+            }
+            _ => {
+                for (word, value) in [
+                    (&b"true"[..], Value::Bool(true)),
+                    (b"false", Value::Bool(false)),
+                    (b"null", Value::Null),
+                ] {
+                    if self.s[self.at..].starts_with(word) {
+                        self.at += word.len();
+                        return Some(value);
+                    }
+                }
+                let start = self.at;
+                while self
+                    .s
+                    .get(self.at)
+                    .is_some_and(|b| b.is_ascii_digit() || b"+-.eE".contains(b))
+                {
+                    self.at += 1;
+                }
+                std::str::from_utf8(&self.s[start..self.at])
+                    .ok()?
+                    .parse()
+                    .ok()
+                    .map(Value::Number)
+            }
+        }
     }
 
     fn object_of_lists(&mut self, wanted: &str) -> Option<Vec<String>> {
@@ -244,5 +431,22 @@ mod tests {
         );
         assert!(string_list(json, "problems").unwrap().is_empty());
         assert!(string_list("{\"changes\":[1]}", "changes").is_err());
+    }
+
+    #[test]
+    fn reads_values_and_base64() {
+        let v = parse(r#"[{"a":"x","n":-1.5e2,"b":true,"z":null,"l":[[1,2]]}]"#).unwrap();
+        let o = &v.as_array().unwrap()[0];
+        assert_eq!(o.get("a").and_then(Value::as_str), Some("x"));
+        assert_eq!(o.get("n").and_then(Value::as_f64), Some(-150.0));
+        assert_eq!(o.get("b").and_then(Value::as_bool), Some(true));
+        assert_eq!(o.get("z"), Some(&Value::Null));
+        assert!(parse("[1] x").is_none());
+        assert!(parse(&"[".repeat(100)).is_none());
+        assert_eq!(base64("aGVsbG8=").unwrap(), b"hello");
+        assert_eq!(base64("aGk=").unwrap(), b"hi");
+        assert_eq!(base64("").unwrap(), b"");
+        assert!(base64("a=b=").is_none());
+        assert!(base64("abc").is_none());
     }
 }
