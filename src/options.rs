@@ -90,6 +90,11 @@ pub enum Conformance {
     PdfA3b,
     /// PDF/A-3u: PDF/A-3b, and all text can be extracted as Unicode.
     PdfA3u,
+    /// PDF/A-2a: PDF/A-2u with a tagged structure tree and a declared language, whatever the accessibility option
+    /// says. Only HTML and Markdown conversion write it.
+    PdfA2a,
+    /// PDF/A-3a: PDF/A-2a that may carry any attached file. Only HTML and Markdown conversion write it.
+    PdfA3a,
     /// PDF/A-4, on PDF 2.0. Only HTML and Markdown conversion write it.
     PdfA4,
     /// PDF/A-4f, which allows attachments. Only HTML and Markdown conversion write it.
@@ -103,6 +108,8 @@ impl Conformance {
             Self::PdfA2u => "PDF/A-2u",
             Self::PdfA3b => "PDF/A-3b",
             Self::PdfA3u => "PDF/A-3u",
+            Self::PdfA2a => "PDF/A-2a",
+            Self::PdfA3a => "PDF/A-3a",
             Self::PdfA4 => "PDF/A-4",
             Self::PdfA4f => "PDF/A-4f",
         }
