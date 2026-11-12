@@ -149,6 +149,20 @@ fn document_properties() {
 }
 
 #[test]
+fn pdfa_level_a_is_tagged() {
+    let pdf = html_to_pdf(
+        "<h1>Title</h1><p>Text",
+        &PdfOptions::new()
+            .conformance(Conformance::PdfA3a)
+            .compress(false),
+    )
+    .unwrap();
+    for needle in [&b"/StructTreeRoot"[..], b"/Lang"] {
+        assert!(pdf.windows(needle.len()).any(|w| w == needle));
+    }
+}
+
+#[test]
 fn base_dir_loads_images_and_nothing_loads_without_it() {
     let dir = temp_dir("base");
     std::fs::write(dir.join("dot.png"), tiny_png()).unwrap();

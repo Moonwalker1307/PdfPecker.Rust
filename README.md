@@ -111,7 +111,7 @@ Options of the HTML and Markdown functions (`PdfOptions`):
 | `compress`, `bookmarks` | Compress the streams; make bookmarks from the headings (both on by default). |
 | `max_pages` | Fail with `ErrorKind::Limit` beyond this many pages (default 100,000). |
 | `creation_date` | A fixed `SystemTime`: the output is then byte-identical from run to run. |
-| `conformance` | `Conformance::PdfA2b`, `PdfA3b`, `PdfA2u`, `PdfA3u`, `PdfA4` or `PdfA4f`. |
+| `conformance` | `Conformance::PdfA2b`, `PdfA3b`, `PdfA2u`, `PdfA3u`, `PdfA2a`, `PdfA3a`, `PdfA4` or `PdfA4f`. Level A always writes a tagged structure tree and a language. |
 | `accessibility` | `Accessibility::Tagged`, `PdfUa1` or `PdfUa2`. |
 
 Errors carry an `ErrorKind`: `InvalidArgument` (a bad option value, a page past the end), `Unreadable` (not a readable
